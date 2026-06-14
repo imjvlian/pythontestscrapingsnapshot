@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 BASE_URL = "https://sikumbang.tapera.go.id/ajax/lokasi/search"
 
@@ -10,12 +10,13 @@ headers = {
     "User-Agent": "Mozilla/5.0"
 }
 
-SAVE_DIR = "data"
+# support Render disk (/data) atau lokal
+SAVE_DIR = "/data" if os.path.exists("/data") else "data"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 
 # =========================
-# 1. FETCH DATA (Lumajang)
+# FETCH DATA API
 # =========================
 def fetch_data():
     page = 1
@@ -29,9 +30,14 @@ def fetch_data():
             "limit": limit
         }
 
-        res = requests.get(BASE_URL, headers=headers, params=params)
+        try:
+            res = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
+        except Exception as e:
+            print(f"Request error: {e}")
+            break
 
         if res.status_code != 200:
+            print(f"Request gagal: {res.status_code}")
             break
 
         data = res.json().get("data", [])
@@ -57,111 +63,92 @@ def fetch_data():
         print(f"Fetch page {page}")
         page += 1
 
-    return pd.DataFrame(results)
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        print("Tidak ada data ditemukan")
+    else:
+        print(f"Total data: {len(df)}")
+
+    return df
 
 
 # =========================
-# 2. SAVE SNAPSHOT
+# SAVE SNAPSHOT HARIAN
 # =========================
 def save_snapshot(df):
     today = datetime.now().strftime("%Y-%m-%d")
     path = os.path.join(SAVE_DIR, f"snapshot_{today}.csv")
+
     df.to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"Snapshot saved: {path}")
+
     return path
 
 
 # =========================
-# 3. LOAD YESTERDAY
+# GENERATE SALES FILES
 # =========================
-def load_yesterday():
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    path = os.path.join(SAVE_DIR, f"snapshot_{yesterday}.csv")
+def auto_generate_sales_files():
+    files = sorted([f for f in os.listdir(SAVE_DIR) if f.startswith("snapshot_")])
 
-    if not os.path.exists(path):
-        print("⚠️ Tidak ada data kemarin")
-        return None
-
-    return pd.read_csv(path)
-
-
-# =========================
-# 4. COMPARE + STATISTIK
-# =========================
-def generate_statistics(today_df, yesterday_df):
-    if yesterday_df is None:
-        print("❌ Tidak bisa compare")
+    if len(files) < 2:
+        print("Snapshot belum cukup untuk generate sales")
         return
 
-    df = yesterday_df.merge(
-        today_df,
-        on="kode",
-        suffixes=("_old", "_new")
-    )
+    for i in range(1, len(files)):
+        date = files[i].replace("snapshot_", "").replace(".csv", "")
+        sales_file = os.path.join(SAVE_DIR, f"sales_{date}.csv")
 
-    # hitung penurunan
-    df["penurunan_subsidi"] = df["subsidi_old"] - df["subsidi_new"]
-    df["penurunan_komersil"] = df["komersil_old"] - df["komersil_new"]
+        # skip kalau sudah ada
+        if os.path.exists(sales_file):
+            continue
 
-    # ambil yang benar-benar turun
-    df = df[(df["penurunan_subsidi"] > 0) | (df["penurunan_komersil"] > 0)]
+        df_old = pd.read_csv(os.path.join(SAVE_DIR, files[i-1]))
+        df_new = pd.read_csv(os.path.join(SAVE_DIR, files[i]))
 
-    # total penurunan
-    df["total_penurunan"] = df["penurunan_subsidi"] + df["penurunan_komersil"]
+        merged = df_old.merge(df_new, on="kode", suffixes=("_old", "_new"))
 
-    # ranking
-    ranking = df.sort_values("total_penurunan", ascending=False)
+        merged["terjual_subsidi"] = merged["subsidi_old"] - merged["subsidi_new"]
+        merged["terjual_komersil"] = merged["komersil_old"] - merged["komersil_new"]
+        merged["total_terjual"] = merged["terjual_subsidi"] + merged["terjual_komersil"]
 
-    # =====================
-    # STATISTIK TAMBAHAN
-    # =====================
+        sold = merged[merged["total_terjual"] > 0]
 
-    total_terjual = df["total_penurunan"].sum()
+        if sold.empty:
+            print(f"Tidak ada penjualan untuk {date}")
+            continue
 
-    top_perumahan = ranking[[
-        "nama_old", "developer_old", "kecamatan_old", "total_penurunan"
-    ]].head(10)
+        sold[[
+            "kode",
+            "nama_old",
+            "developer_old",
+            "kecamatan_old",
+            "terjual_subsidi",
+            "terjual_komersil",
+            "total_terjual"
+        ]].to_csv(sales_file, index=False, encoding="utf-8-sig")
 
-    # agregasi per kecamatan
-    per_kecamatan = df.groupby("kecamatan_old")["total_penurunan"].sum().reset_index()
-    per_kecamatan = per_kecamatan.sort_values("total_penurunan", ascending=False)
-
-    # =====================
-    # SAVE CSV
-    # =====================
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    ranking.to_csv(os.path.join(SAVE_DIR, f"ranking_{today}.csv"), index=False, encoding="utf-8-sig")
-    top_perumahan.to_csv(os.path.join(SAVE_DIR, f"top10_{today}.csv"), index=False, encoding="utf-8-sig")
-    per_kecamatan.to_csv(os.path.join(SAVE_DIR, f"kecamatan_{today}.csv"), index=False, encoding="utf-8-sig")
-
-    # =====================
-    # PRINT SUMMARY
-    # =====================
-    print("\nSTATISTIK HARIAN")
-    print(f"Total unit berkurang: {total_terjual}")
-
-    print("\nTOP PERUMAHAN:")
-    print(top_perumahan)
-
-    print("\nTOP KECAMATAN:")
-    print(per_kecamatan.head(5))
+        print(f"Generated sales: {sales_file}")
 
 
 # =========================
 # MAIN
 # =========================
 def main():
-    print("Fetch data...")
-    today_df = fetch_data()
+    print("Start job")
 
-    print("Save snapshot...")
-    save_snapshot(today_df)
+    df = fetch_data()
 
-    print("Load yesterday...")
-    yesterday_df = load_yesterday()
+    if df.empty:
+        print("Stop karena data kosong")
+        return
 
-    print("Generate statistik...")
-    generate_statistics(today_df, yesterday_df)
+    save_snapshot(df)
+
+    auto_generate_sales_files()
+
+    print("Job selesai")
 
 
 if __name__ == "__main__":

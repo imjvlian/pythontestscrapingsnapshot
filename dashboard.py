@@ -54,7 +54,7 @@ def load_latest():
 
 
 # =========================
-# LOAD DATA PENJUALAN (COMPARE)
+# LOAD PENJUALAN TERAKHIR
 # =========================
 def load_sales_data():
     files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("snapshot_")])
@@ -77,11 +77,32 @@ def load_sales_data():
 
 
 # =========================
+# LOAD SALES BULANAN
+# =========================
+def load_monthly_sales():
+    files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("sales_")])
+
+    if not files:
+        return pd.DataFrame()
+
+    all_data = []
+
+    for f in files:
+        df = pd.read_csv(os.path.join(DATA_DIR, f))
+        date = f.replace("sales_", "").replace(".csv", "")
+        df["tanggal"] = pd.to_datetime(date)
+        all_data.append(df)
+
+    return pd.concat(all_data, ignore_index=True)
+
+
+# =========================
 # LOAD DATA
 # =========================
 trend_df = load_trend()
 latest_df = load_latest()
 sales_df = load_sales_data()
+monthly_df = load_monthly_sales()
 
 if trend_df.empty:
     st.warning("Data belum cukup (minimal 2 hari snapshot)")
@@ -136,7 +157,7 @@ st.bar_chart(monthly)
 
 
 # =========================
-# DATA TERJUAL
+# DATA TERJUAL TERAKHIR
 # =========================
 st.subheader("Perumahan Terjual (Hari Terakhir)")
 
@@ -156,27 +177,72 @@ else:
 
 
 # =========================
-# TOP PENJUALAN
+# TOP PENJUALAN HARIAN
 # =========================
-st.subheader("Top Penjualan Hari Terakhir")
+st.subheader("Top Penjualan Harian")
 
 if not sales_df.empty:
-    top_sales = sales_df.head(10)
-
     st.dataframe(
-        top_sales[[
+        sales_df[[
             "nama_old",
             "total_terjual"
-        ]]
+        ]].head(10)
     )
 
 
 # =========================
-# SUMMARY PENJUALAN
+# FILTER BULAN
 # =========================
-if not sales_df.empty:
-    total_today = sales_df["total_terjual"].sum()
-    st.metric("Total Unit Terjual Hari Terakhir", int(total_today))
+st.subheader("Filter Bulan")
+
+if not monthly_df.empty:
+    monthly_df["bulan"] = monthly_df["tanggal"].dt.to_period("M").astype(str)
+
+    selected_month = st.selectbox(
+        "Pilih Bulan",
+        sorted(monthly_df["bulan"].unique(), reverse=True)
+    )
+
+    filtered_month = monthly_df[monthly_df["bulan"] == selected_month]
+else:
+    filtered_month = pd.DataFrame()
+
+
+# =========================
+# TOP BULANAN
+# =========================
+st.subheader("Top Perumahan Terjual Bulanan")
+
+if filtered_month.empty:
+    st.info("Belum ada data penjualan bulanan")
+else:
+    ranking_bulanan = (
+        filtered_month
+        .groupby(["kode", "nama_old", "developer_old", "kecamatan_old"])["total_terjual"]
+        .sum()
+        .reset_index()
+        .sort_values("total_terjual", ascending=False)
+    )
+
+    st.dataframe(ranking_bulanan.head(10))
+
+
+# =========================
+# GRAFIK BULANAN TOP
+# =========================
+st.subheader("Grafik Top Penjualan Bulanan")
+
+if not filtered_month.empty:
+    chart_data = ranking_bulanan.head(10).set_index("nama_old")["total_terjual"]
+    st.bar_chart(chart_data)
+
+
+# =========================
+# SUMMARY BULANAN
+# =========================
+if not filtered_month.empty:
+    total_bulan = ranking_bulanan["total_terjual"].sum()
+    st.metric("Total Unit Terjual Bulan Ini", int(total_bulan))
 
 
 # =========================

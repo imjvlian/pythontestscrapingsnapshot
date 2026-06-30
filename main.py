@@ -80,7 +80,12 @@ def save_snapshot(df):
     today = datetime.now().strftime("%Y-%m-%d")
     path = os.path.join(SAVE_DIR, f"snapshot_{today}.csv")
 
+    if os.path.exists(path):
+        print(f"Snapshot hari ini sudah ada: {path}")
+        return path
+
     df.to_csv(path, index=False, encoding="utf-8-sig")
+
     print(f"Snapshot saved: {path}")
 
     return path
@@ -153,3 +158,64 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def generate_monthly_ranking():
+    sales_files = sorted(
+        [f for f in os.listdir(SAVE_DIR) if f.startswith("sales_")]
+    )
+
+    if not sales_files:
+        print("Belum ada file sales.")
+        return
+
+    all_sales = []
+
+    for file in sales_files:
+
+        date = file.replace("sales_", "").replace(".csv", "")
+
+        try:
+            df = pd.read_csv(os.path.join(SAVE_DIR, file))
+        except:
+            continue
+
+        if df.empty:
+            continue
+
+        df["tanggal"] = pd.to_datetime(date)
+
+        all_sales.append(df)
+
+    if len(all_sales) == 0:
+        return
+
+    sales = pd.concat(all_sales, ignore_index=True)
+
+    sales["bulan"] = sales["tanggal"].dt.to_period("M").astype(str)
+
+    ranking = (
+        sales.groupby(
+            [
+                "bulan",
+                "kode",
+                "nama_old",
+                "developer_old",
+                "kecamatan_old",
+            ]
+        )["total_terjual"]
+        .sum()
+        .reset_index()
+        .sort_values(
+            ["bulan", "total_terjual"],
+            ascending=[False, False]
+        )
+    )
+
+    ranking.to_csv(
+        os.path.join(SAVE_DIR, "ranking_bulanan.csv"),
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    print("Ranking bulanan berhasil dibuat.")

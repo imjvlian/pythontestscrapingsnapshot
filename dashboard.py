@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+from glob import glob
 import os
 
 st.set_page_config(
@@ -25,18 +26,60 @@ def load_csv(filename):
     return pd.DataFrame()
 
 @st.cache_data(ttl=300)
+def load_latest(pattern):
+    files = sorted(glob(os.path.join(DATA_DIR, pattern)))
+
+    if not files:
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(files[-1])
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
 def load_all_data():
+
+    inventory = load_csv("inventory.csv")
+
+    if inventory.empty:
+        inventory = load_latest("snapshot*.csv")
+
     return {
-        "inventory": load_csv("inventory.csv"),
+
+        "inventory": inventory,
+
         "history": load_csv("history.csv"),
+
         "statistics": load_csv("statistics.csv"),
+
         "summary": load_csv("summary.csv"),
-        "ranking_harian": load_csv("ranking_harian.csv"),
-        "ranking_bulanan": load_csv("ranking_bulanan.csv"),
-        "developer_rank": load_csv("developer_rank.csv"),
-        "kecamatan_rank": load_csv("kecamatan_rank.csv"),
-        "top_sales": load_csv("top_sales.csv"),
-        "weekly_growth": load_csv("weekly_growth.csv"),
+
+        "ranking_harian":
+            load_csv("ranking_harian.csv")
+            if os.path.exists(os.path.join(DATA_DIR, "ranking_harian.csv"))
+            else load_latest("ranking_*.csv"),
+
+        "ranking_bulanan":
+            load_csv("ranking_bulanan.csv")
+            if os.path.exists(os.path.join(DATA_DIR, "ranking_bulanan.csv"))
+            else load_latest("top10_*.csv"),
+
+        "developer_rank":
+            load_csv("developer_rank.csv"),
+
+        "kecamatan_rank":
+            load_csv("kecamatan_rank.csv")
+            if os.path.exists(os.path.join(DATA_DIR, "kecamatan_rank.csv"))
+            else load_latest("kecamatan_*.csv"),
+
+        "top_sales":
+            load_csv("top_sales.csv")
+            if os.path.exists(os.path.join(DATA_DIR, "top_sales.csv"))
+            else load_latest("sales_*.csv"),
+
+        "weekly_growth":
+            load_csv("weekly_growth.csv"),
     }
 
 data = load_all_data()

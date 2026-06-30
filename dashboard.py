@@ -1,261 +1,257 @@
+
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
 import os
+
+st.set_page_config(
+    page_title="Dashboard Penjualan Perumahan Lumajang",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 DATA_DIR = "data"
 
-st.set_page_config(page_title="Dashboard Perumahan Lumajang", layout="wide")
+@st.cache_data(ttl=300)
+def load_csv(filename):
+    path = os.path.join(DATA_DIR, filename)
+    if os.path.exists(path):
+        try:
+            return pd.read_csv(path)
+        except:
+            return pd.DataFrame()
+    return pd.DataFrame()
 
-st.title("Dashboard Penjualan Perumahan Lumajang")
+@st.cache_data(ttl=300)
+def load_all_data():
+    return {
+        "inventory": load_csv("inventory.csv"),
+        "history": load_csv("history.csv"),
+        "statistics": load_csv("statistics.csv"),
+        "summary": load_csv("summary.csv"),
+        "ranking_harian": load_csv("ranking_harian.csv"),
+        "ranking_bulanan": load_csv("ranking_bulanan.csv"),
+        "developer_rank": load_csv("developer_rank.csv"),
+        "kecamatan_rank": load_csv("kecamatan_rank.csv"),
+        "top_sales": load_csv("top_sales.csv"),
+        "weekly_growth": load_csv("weekly_growth.csv"),
+    }
 
+data = load_all_data()
 
-# =========================
-# LOAD TREND HARIAN
-# =========================
-def load_trend():
-    files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("snapshot_")])
+st.title("🏠 Dashboard Monitoring Penjualan Perumahan Kabupaten Lumajang")
 
-    rows = []
+with st.sidebar:
+    st.header("Filter")
+    inventory = data["inventory"]
 
-    for i in range(1, len(files)):
-        df_old = pd.read_csv(os.path.join(DATA_DIR, files[i-1]))
-        df_new = pd.read_csv(os.path.join(DATA_DIR, files[i]))
+    kecamatan_options = ["Semua"]
+    developer_options = ["Semua"]
 
-        date = files[i].replace("snapshot_", "").replace(".csv", "")
+    if not inventory.empty:
+        for col in inventory.columns:
+            if col.lower() == "kecamatan":
+                kecamatan_options += sorted(inventory[col].dropna().astype(str).unique().tolist())
+            if col.lower() == "developer":
+                developer_options += sorted(inventory[col].dropna().astype(str).unique().tolist())
 
-        merged = df_old.merge(df_new, on="kode", suffixes=("_old", "_new"))
+    selected_kecamatan = st.selectbox("Kecamatan", kecamatan_options)
+    selected_developer = st.selectbox("Developer", developer_options)
 
-        merged["penurunan"] = (
-            merged["subsidi_old"] - merged["subsidi_new"]
-        ) + (
-            merged["komersil_old"] - merged["komersil_new"]
+    search_text = st.text_input("Cari Nama Perumahan")
+
+    if st.button("🔄 Refresh"):
+        st.cache_data.clear()
+        st.rerun()
+
+inventory_filtered = inventory.copy()
+
+if not inventory_filtered.empty:
+
+    if selected_kecamatan != "Semua" and "kecamatan" in [c.lower() for c in inventory_filtered.columns]:
+        real_col = [c for c in inventory_filtered.columns if c.lower()=="kecamatan"][0]
+        inventory_filtered = inventory_filtered[inventory_filtered[real_col].astype(str)==selected_kecamatan]
+
+    if selected_developer != "Semua" and "developer" in [c.lower() for c in inventory_filtered.columns]:
+        real_col = [c for c in inventory_filtered.columns if c.lower()=="developer"][0]
+        inventory_filtered = inventory_filtered[inventory_filtered[real_col].astype(str)==selected_developer]
+
+    if search_text:
+        match_cols = [c for c in inventory_filtered.columns if "perumahan" in c.lower() or "nama" in c.lower()]
+        if match_cols:
+            inventory_filtered = inventory_filtered[
+                inventory_filtered[match_cols[0]].astype(str).str.contains(search_text, case=False, na=False)
+            ]
+
+stats = data["statistics"]
+
+st.subheader("📊 KPI")
+
+c1,c2,c3,c4 = st.columns(4)
+
+if not stats.empty and len(stats) > 0:
+    row = stats.iloc[0]
+    cols = stats.columns.tolist()
+
+    c1.metric(cols[0], row.iloc[0])
+    c2.metric(cols[1] if len(cols)>1 else "Metric 2", row.iloc[1] if len(cols)>1 else 0)
+    c3.metric(cols[2] if len(cols)>2 else "Metric 3", row.iloc[2] if len(cols)>2 else 0)
+    c4.metric(cols[3] if len(cols)>3 else "Metric 4", row.iloc[3] if len(cols)>3 else 0)
+else:
+    c1.metric("Total Unit", 0)
+    c2.metric("Terjual", 0)
+    c3.metric("Tersedia", 0)
+    c4.metric("Developer", 0)
+
+summary = data["summary"]
+history = data["history"]
+
+left,right = st.columns(2)
+
+with left:
+    st.subheader("📈 Tren Penjualan")
+
+    if not history.empty and len(history.columns) >= 2:
+        fig = px.line(
+            history,
+            x=history.columns[0],
+            y=history.columns[1]
         )
+        st.plotly_chart(fig, use_container_width=True)
 
-        total = merged[merged["penurunan"] > 0]["penurunan"].sum()
+with right:
+    st.subheader("📅 Ringkasan Harian")
 
-        rows.append({
-            "tanggal": date,
-            "total_penjualan": total
-        })
+    if not summary.empty:
+        st.dataframe(summary, use_container_width=True)
 
-    return pd.DataFrame(rows)
-
-
-# =========================
-# LOAD DATA TERBARU
-# =========================
-def load_latest():
-    files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("snapshot_")])
-    if not files:
-        return pd.DataFrame()
-
-    latest = files[-1]
-    return pd.read_csv(os.path.join(DATA_DIR, latest))
-
-
-# =========================
-# LOAD PENJUALAN TERAKHIR
-# =========================
-def load_sales_data():
-    files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("snapshot_")])
-
-    if len(files) < 2:
-        return pd.DataFrame()
-
-    df_old = pd.read_csv(os.path.join(DATA_DIR, files[-2]))
-    df_new = pd.read_csv(os.path.join(DATA_DIR, files[-1]))
-
-    merged = df_old.merge(df_new, on="kode", suffixes=("_old", "_new"))
-
-    merged["terjual_subsidi"] = merged["subsidi_old"] - merged["subsidi_new"]
-    merged["terjual_komersil"] = merged["komersil_old"] - merged["komersil_new"]
-    merged["total_terjual"] = merged["terjual_subsidi"] + merged["terjual_komersil"]
-
-    sold = merged[merged["total_terjual"] > 0]
-
-    return sold.sort_values("total_terjual", ascending=False)
-
-
-# =========================
-# LOAD SALES BULANAN
-# =========================
-def load_monthly_sales():
-    files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith("sales_")])
-
-    if not files:
-        return pd.DataFrame()
-
-    all_data = []
-
-    for f in files:
-        df = pd.read_csv(os.path.join(DATA_DIR, f))
-        date = f.replace("sales_", "").replace(".csv", "")
-        df["tanggal"] = pd.to_datetime(date)
-        all_data.append(df)
-
-    return pd.concat(all_data, ignore_index=True)
-
-
-# =========================
-# LOAD DATA
-# =========================
-trend_df = load_trend()
-latest_df = load_latest()
-sales_df = load_sales_data()
-monthly_df = load_monthly_sales()
-
-if trend_df.empty:
-    st.warning("Data belum cukup (minimal 2 hari snapshot)")
-    st.stop()
-
-trend_df["tanggal"] = pd.to_datetime(trend_df["tanggal"])
-
-
-# =========================
-# FILTER TANGGAL
-# =========================
-col1, col2 = st.columns(2)
+col1,col2 = st.columns(2)
 
 with col1:
-    start_date = st.date_input("Dari tanggal", trend_df["tanggal"].min())
+    st.subheader("🏆 Top 10 Harian")
+    ranking_harian = data["ranking_harian"]
+
+    if not ranking_harian.empty and len(ranking_harian.columns)>=2:
+        fig = px.bar(
+            ranking_harian.head(10),
+            x=ranking_harian.columns[1],
+            y=ranking_harian.columns[0],
+            orientation="h"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    end_date = st.date_input("Sampai tanggal", trend_df["tanggal"].max())
+    st.subheader("🏅 Top 10 Bulanan")
+    ranking_bulanan = data["ranking_bulanan"]
 
-filtered = trend_df[
-    (trend_df["tanggal"] >= pd.to_datetime(start_date)) &
-    (trend_df["tanggal"] <= pd.to_datetime(end_date))
-]
+    if not ranking_bulanan.empty and len(ranking_bulanan.columns)>=2:
+        fig = px.bar(
+            ranking_bulanan.head(10),
+            x=ranking_bulanan.columns[1],
+            y=ranking_bulanan.columns[0],
+            orientation="h"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
+col3,col4 = st.columns(2)
 
-# =========================
-# METRICS
-# =========================
-total_penjualan = filtered["total_penjualan"].sum()
-avg_penjualan = filtered["total_penjualan"].mean()
+with col3:
+    st.subheader("👨‍💼 Ranking Developer")
 
-col1, col2 = st.columns(2)
-col1.metric("Total Penjualan", int(total_penjualan))
-col2.metric("Rata-rata Harian", round(avg_penjualan, 2))
+    df = data["developer_rank"]
 
+    if not df.empty and len(df.columns)>=2:
+        fig = px.bar(df, x=df.columns[0], y=df.columns[1])
+        st.plotly_chart(fig, use_container_width=True)
 
-# =========================
-# GRAFIK HARIAN
-# =========================
-st.subheader("Tren Penjualan Harian")
-st.line_chart(filtered.set_index("tanggal")["total_penjualan"])
+with col4:
+    st.subheader("📍 Ranking Kecamatan")
 
+    df = data["kecamatan_rank"]
 
-# =========================
-# GRAFIK BULANAN
-# =========================
-st.subheader("Tren Penjualan Bulanan")
-filtered["bulan"] = filtered["tanggal"].dt.to_period("M").astype(str)
-monthly = filtered.groupby("bulan")["total_penjualan"].sum()
+    if not df.empty and len(df.columns)>=2:
+        fig = px.bar(df, x=df.columns[0], y=df.columns[1])
+        st.plotly_chart(fig, use_container_width=True)
 
-st.bar_chart(monthly)
+st.subheader("🚀 Weekly Growth")
 
+weekly = data["weekly_growth"]
 
-# =========================
-# DATA TERJUAL TERAKHIR
-# =========================
-st.subheader("Perumahan Terjual (Hari Terakhir)")
+if not weekly.empty and len(weekly.columns)>=2:
+    fig = px.line(
+        weekly,
+        x=weekly.columns[0],
+        y=weekly.columns[1],
+        markers=True
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-if sales_df.empty:
-    st.info("Belum ada perubahan unit hari ini")
-else:
-    st.dataframe(
-        sales_df[[
-            "nama_old",
-            "developer_old",
-            "kecamatan_old",
-            "terjual_subsidi",
-            "terjual_komersil",
-            "total_terjual"
-        ]]
+st.subheader("💰 Top Sales")
+
+top_sales = data["top_sales"]
+
+if not top_sales.empty:
+    st.dataframe(top_sales, use_container_width=True)
+
+st.subheader("🏠 Inventory")
+
+st.dataframe(
+    inventory_filtered,
+    use_container_width=True,
+    height=500
+)
+
+if not inventory_filtered.empty:
+    csv = inventory_filtered.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "⬇ Download Inventory CSV",
+        csv,
+        file_name="inventory_filtered.csv",
+        mime="text/csv"
     )
 
+st.subheader("📖 History Per Perumahan")
 
-# =========================
-# TOP PENJUALAN HARIAN
-# =========================
-st.subheader("Top Penjualan Harian")
+if not history.empty:
 
-if not sales_df.empty:
-    st.dataframe(
-        sales_df[[
-            "nama_old",
-            "total_terjual"
-        ]].head(10)
-    )
+    name_col = None
 
+    for col in history.columns:
+        if "perumahan" in col.lower() or "nama" in col.lower():
+            name_col = col
+            break
 
-# =========================
-# FILTER BULAN
-# =========================
-st.subheader("Filter Bulan")
+    if name_col:
 
-if not monthly_df.empty:
-    monthly_df["bulan"] = monthly_df["tanggal"].dt.to_period("M").astype(str)
+        selected = st.selectbox(
+            "Pilih Perumahan",
+            sorted(history[name_col].dropna().astype(str).unique())
+        )
 
-    selected_month = st.selectbox(
-        "Pilih Bulan",
-        sorted(monthly_df["bulan"].unique(), reverse=True)
-    )
+        df_hist = history[history[name_col].astype(str)==selected]
 
-    filtered_month = monthly_df[monthly_df["bulan"] == selected_month]
-else:
-    filtered_month = pd.DataFrame()
+        st.dataframe(df_hist, use_container_width=True)
 
+        numeric_cols = df_hist.select_dtypes(include="number").columns
 
-# =========================
-# TOP BULANAN
-# =========================
-st.subheader("Top Perumahan Terjual Bulanan")
+        if len(numeric_cols) > 0:
+            fig = px.line(df_hist, y=numeric_cols[0])
+            st.plotly_chart(fig, use_container_width=True)
 
-if filtered_month.empty:
-    st.info("Belum ada data penjualan bulanan")
-else:
-    ranking_bulanan = (
-        filtered_month
-        .groupby(["kode", "nama_old", "developer_old", "kecamatan_old"])["total_terjual"]
-        .sum()
-        .reset_index()
-        .sort_values("total_terjual", ascending=False)
-    )
+st.caption(
+    f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+)
 
-    st.dataframe(ranking_bulanan.head(10))
-
-
-# =========================
-# GRAFIK BULANAN TOP
-# =========================
-st.subheader("Grafik Top Penjualan Bulanan")
-
-if not filtered_month.empty:
-    chart_data = ranking_bulanan.head(10).set_index("nama_old")["total_terjual"]
-    st.bar_chart(chart_data)
-
-
-# =========================
-# SUMMARY BULANAN
-# =========================
-if not filtered_month.empty:
-    total_bulan = ranking_bulanan["total_terjual"].sum()
-    st.metric("Total Unit Terjual Bulan Ini", int(total_bulan))
-
-
-# =========================
-# DATA TERBARU
-# =========================
-st.subheader("Data Perumahan Terbaru")
-
-if not latest_df.empty:
-    st.dataframe(latest_df)
-
-
-# =========================
-# RAW DATA
-# =========================
-with st.expander("Lihat Data Trend"):
-    st.dataframe(trend_df)
+st.markdown(
+    """
+    <script>
+    setTimeout(function(){
+       window.location.reload();
+    },300000);
+    </script>
+    """,
+    unsafe_allow_html=True
+)

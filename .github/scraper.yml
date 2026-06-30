@@ -1,22 +1,30 @@
-name: Daily Scraper
+name: Sikumbang Lumajang Daily Scraper
 
 on:
-  schedule:
-    - cron: '0 1 * * *'
   workflow_dispatch:
 
+  schedule:
+    # Jam 07:00 WIB
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: write
+
 jobs:
+
   scrape:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Dependencies
         run: |
@@ -24,19 +32,18 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Scraper
-        run: python main.py
-
-      - name: Commit CSV Files
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          python main.py
 
-          git add data/*.csv
+      - name: Commit CSV
+        run: |
 
-          git diff --cached --quiet || git commit -m "Auto update data $(date +'%Y-%m-%d')"
+          git config user.name "github-actions"
 
-      - name: Push Changes
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          branch: main
+          git config user.email "github-actions@github.com"
+
+          git add data/
+
+          git diff --cached --quiet || git commit -m "Auto Update $(date '+%Y-%m-%d %H:%M:%S')"
+
+          git push
